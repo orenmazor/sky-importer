@@ -82,7 +82,7 @@ func main() {
 	flag.Parse()
 
 	// Make sure we have files.
-	if flag.NArg() == 0 || tableName == "" {
+	if tableName == "" {
 		usage()
 	}
 
@@ -93,16 +93,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Loop over files.
-	for _, filename := range flag.Args() {
-		if err = importFile(table, filename); err != nil {
-			warn("Invalid file: %v", err)
+	if flag.NArg() > 0 {
+		// Loop over files.
+		for _, filename := range flag.Args() {
+			if err = importFile(table, filename); err != nil {
+				warn("Invalid file: %v", err)
+			}
 		}
+	} else {
+		warn("waiting for stdin...")
+		importStdin(table)
 	}
 }
 
 func usage() {
-	warn("usage: sky-importer [OPTIONS] FILE")
+	warn("usage: sky-importer [OPTIONS] FILE or STDIN")
 	os.Exit(1)
 }
 
@@ -136,6 +141,30 @@ func setup() (*sky.Client, *sky.Table, error) {
 // Import
 //--------------------------------------
 
+// Imports indefinitely from STDIN
+func importStdin(table *sky.Table) {
+	reader := bufio.NewReader(os.Stdin)
+
+	lineNumber := 1
+	for {
+		inputBytes, _, err := reader.ReadLine()
+		if err != nil {
+			warn("%v", err)
+		}
+		data := map[string]interface{}{}
+		err = json.Unmarshal(inputBytes, &data)
+		if err != nil {
+			warn("%v", err)
+		}
+
+		if err = importData(table, data); err != nil {
+			warn("[L%d] %v", lineNumber, err)
+		}
+
+		lineNumber++
+	}
+}
+
 // Imports a single JSON formatted file into a table.
 func importFile(table *sky.Table, filename string) error {
 	// Open the file.
@@ -147,7 +176,7 @@ func importFile(table *sky.Table, filename string) error {
 
 	// Wrap it in a buffer.
 	var reader io.Reader
-	
+
 	// If this is a gzipped file then decompress it.
 	if filepath.Ext(filename) == ".gz" {
 		gzipReader, err := gzip.NewReader(file)
@@ -159,7 +188,7 @@ func importFile(table *sky.Table, filename string) error {
 	} else {
 		reader = bufio.NewReader(file)
 	}
-	
+
 	// Decode JSON and insert.
 	lineNumber := 1
 	decoder := json.NewDecoder(reader)
@@ -204,12 +233,11 @@ func importData(table *sky.Table, data map[string]interface{}) error {
 		}
 	}
 	delete(data, "timestamp")
-	
+
 	// Create Sky event.
 	event := sky.NewEvent(timestamp, data)
-	return table.AddEvent(objectId, event, sky.Merge)	
+	return table.AddEvent(objectId, event, sky.Merge)
 }
-
 
 //--------------------------------------
 // Utility
